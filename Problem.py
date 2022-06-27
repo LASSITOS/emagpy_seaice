@@ -26,9 +26,9 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 # emagpy custom import
-from emagpy.invertHelper import (fCS, fMaxwellECa, fMaxwellQ,fMaxwellQI, buildSecondDiff,
+from emagpy_seaice.invertHelper import (fCS, fMaxwellECa, fMaxwellQ,fMaxwellQI, buildSecondDiff,
                                  buildJacobian, getQs, eca2Q)
-from emagpy.Survey import Survey, idw, clipConvexHull, griddata
+from emagpy_seaice.Survey import Survey, idw, clipConvexHull, griddata
 
 
 class HiddenPrints:
@@ -89,7 +89,7 @@ class Problem(object):
         Parameters
         ----------
         fname : str
-            Path to the csv file with the data.
+            Path to the csv file with the data. Or pd.dataframe with data properly formatted
         freq : float, optional
             Frequency for all the coils (can also be specified for each coil in the file).
         hx : float, optional
@@ -630,7 +630,7 @@ class Problem(object):
                 # misfit = misfit*1e6 # to help the solver with small Q
                 # misfit = np.abs(misfit/obs)
             if forwardModel == 'QP':
-                misfit = np.sqrt(np.imag(misfit)**2 + 1e-9*np.real(misfit)**2)
+                misfit = np.sqrt(np.imag(misfit)**2 + 1e-9*np.real(misfit)**2)          #!!!!!!! weight factor for inphase not flexble !!!!!! 
                 # the inphase part makes this misfit quite stable (and so
                 # difficult for solver to optimize), adding a coefficient helps
                 # misfit = np.imag(misfit)
@@ -814,6 +814,19 @@ class Problem(object):
             params = []
             outs = []
             nrows = survey.df.shape[0]
+            
+            # def print_v(v):
+            #     print(v,': ',eval(v))
+            # print('-----------')
+            # # print_v('model')
+            # print('coils: ',self.coils)
+            # print('coilsQuad: ',self.coilsQuad)
+            # print('nrows: ',nrows)
+            # print('nc: ',nc,', nd: ',nd,', vd: ',vd,', vc: ',vc,)
+            # print('apps: ',apps)
+            # print('quad: ',quad)
+            # print('model: ',model)
+            
             for j in range(nrows):
                 # define observations and convert to Q if needed
                 obs = apps[j,:]
@@ -840,7 +853,11 @@ class Problem(object):
                         iinverted[ipt] = True
                     else: # previous survey
                         pn = np.r_[depth[j-1,:][vd], model[j-1,:][vc]]
-                    
+                
+                # print('---------------------\nj:',j)    
+                # print('Obs:')    
+                # print(obs)
+                
                 # define profile from previous survey for time-lapse constrain
                 if i == 0 or gamma == 0:
                     spn = np.zeros(np.sum(np.r_[vd, vc]))
@@ -859,6 +876,10 @@ class Problem(object):
                     try:
                         with HiddenPrints():
                             outt = solve(*params[j])
+                        # outt = solve(*params[j])
+                                               
+                        print(outt)
+                        
                         dump('\r{:d}/{:d} inverted'.format(j+1, nrows))
                         obs = params[j][0]
                         ini0 = params[j][-1]
@@ -874,7 +895,11 @@ class Problem(object):
                             obs = np.sqrt(np.imag(obs)**2 + 1e-9*np.real(obs)**2)                         ## Usinng damping factor for Inphase!!!!!!!!!! Should be a variable not a constant in code!!!!!!!!!!!!
                         rmse[j] = np.sqrt(np.sum((dataMisfit(out, obs, ini0)/obs)**2)/len(obs))*100
                     except Exception as e:
-                        print('Killed:' , e)
+                        print('Killed:' , e, '\nj:',j)
+                        print('--------------')
+                        print(params[j])
+                        print('--------------')
+                        print('vc:' , vc, 'vd:',vd)
                         return
                     
                 if method == 'Gauss-Newton':
@@ -970,7 +995,8 @@ class Problem(object):
             self.misfits.append(rmse)
             self.pstds.append(stds)
             # dump('{:d} measurements inverted\n'.format(apps.shape[0]))
-                    
+            # print(depth)
+            # print( model)
             
     
     def buildANN(self, fmodel, bounds, noise=0.05, iplot=False, nsample=100,

@@ -18,7 +18,7 @@ from scipy.interpolate import griddata, NearestNDInterpolator
 from scipy.spatial import Delaunay
 from scipy.spatial import ConvexHull
 
-from emagpy.invertHelper import Q2eca
+from emagpy_seaice.invertHelper import Q2eca
 
 
 
@@ -137,7 +137,7 @@ class Survey(object):
     Parameters
     ----------
     fname : str
-        Path of the .csv file to import.
+        Path of the .csv file to import. Or pd.dataframe with data properly formatted
     freq : float, optional
         The instrument frequency in Hz. Can be specified per coil in the .csv.
     hx : float, optional
@@ -169,7 +169,14 @@ class Survey(object):
         self.iselect = []
         self.projection = None # store the project
         if fname is not None:
-            self.readFile(fname, targetProjection=targetProjection, unit=unit)
+            if isinstance(fname, str):
+                self.readFile(fname, targetProjection=targetProjection, unit=unit)
+            elif isinstance(fname, pd.core.frame.DataFrame):
+                self.readDF(fname, targetProjection=targetProjection, unit=unit)
+            else: 
+                raise ValueError('fname must be a string or a pd.dataframe')
+                return
+            
             if freq is not None:
                 self.freqs = np.ones(len(self.coils))*freq
             if hx is not None:
