@@ -520,9 +520,9 @@ class Problem(object):
             elif forwardModel == 'FSeq':
                 return fMaxwellQ(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx)
             elif forwardModel == 'Q':
-                return np.imag(getQs(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx))
+                return np.imag(getQs(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx))*1e3
             elif forwardModel == 'QP':
-                return getQs(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx)
+                return getQs(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx)*1e3
 
         # define bounds
         if bnds is not None:
@@ -715,7 +715,7 @@ class Problem(object):
                 res = minimize(objfunc, x0, args=(obs, pn, spn, alpha, beta, gamma, ini0),
                                method=method, bounds=bounds, options=options)
                 out = res.x  
-                print(res)
+                # print(res)
             elif method in mMCMC: # MCMC based methods
                 spotpySetup = spotpy_setup(obs, bounds, pn, spn, alpha, beta, 
                                            gamma, ini0, fmodel)
@@ -878,7 +878,7 @@ class Problem(object):
                             outt = solve(*params[j])
                         # outt = solve(*params[j])
                                                
-                        print(outt)
+                        # print(outt)
                         
                         dump('\r{:d}/{:d} inverted'.format(j+1, nrows))
                         obs = params[j][0]
@@ -1454,15 +1454,15 @@ class Problem(object):
             elif forwardModel == 'QP':
                 dataType = complex
                 def fmodel(p, depth):
-                    return getQs(p, depth, cspacing, cpos,freqs, hx=hxs)
-                    # fMaxwellQI(p, depth, cspacing, cpos, f=freqs, hx=hxs)
+                    return getQs(p, depth, cspacing, cpos,freqs, hx=hxs)*1e3
             elif forwardModel == 'Q':
                 def fmodel(p, depth):
-                    return np.imag(getQs(p, depth, cspacing, cpos,freqs, hx=hxs))
-                    # fMaxwellQI(p, depth, cspacing, cpos, f=freqs, hx=hxs)
+                    # print('depth',depth)
+                    # print('cond',p)
+                    return np.imag(getQs(p, depth, cspacing, cpos,freqs, hx=hxs))*1e3
         else:
             raise ValueError('Forward model {:s} is not available.'
-                             'Choose between CS, FSlin or FSeq'.format(forwardModel))
+                             'Choose between CS, FSlin, FSeq, Q or QP'.format(forwardModel))
         
         def addnoise(x, level=0.05):
             if forwardModel == 'QP':

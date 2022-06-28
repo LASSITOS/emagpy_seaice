@@ -261,25 +261,31 @@ class Survey(object):
         if 'elevation' not in df.columns:
             df['elevation'] = 0
         
+        
+        
+        if unit == 'ppm':
+            print('Converting quadrature and inPhase columns to ppt units.')
+            for c in self.coilsInph:
+                df[c] = df[c].values/1e3 # to put it in ppt
+            for c in self.coilsQuad:
+                df[c] = df[c].values/1e3 # to put it in ppt
+        
+        
+        
         # IMPORTANT! convert all Q columns to LIN ECa
-        if len(self.coilsQuad) > 0:
+        if len(self.coilsQuad) > 0 and len(self.coils) == 0:
             print('Converting quadrature columns to LIN ECa. '
                   'You can use "FSlin" or "Q" as forward model.')
-        for c in self.coilsInph:
-            if unit == 'ppm':
-                df[c] = df[c].values/1e3 # to put it in ppt
-
-        for c in self.coilsQuad:
-            # as LIN ECa is faster but also is used when doing Q or QP based inversion
-            coilName = c[:-5]
-            info = self.getCoilInfo(coilName)
-            if unit == 'ppt':
+            for c in self.coilsQuad:
+                # as LIN ECa is faster but also is used when doing Q or QP based inversion
+                coilName = c[:-5]
+                info = self.getCoilInfo(coilName)
                 values = 1 + 1j*df[c].values/1e3 # Q is in ppt (part per thousand) like GF-Instruments
-            elif unit == 'ppm':
-                values = 1 + 1j*df[c].values/1e6 # Q is in ppm (part per million) like GEM 2
-            df[coilName] = Q2eca(values, s=info['coilSeparation'], f=info['freq'])*1e3 # mS/m
-            self.coils.append(coilName)
-            
+                df[coilName] = Q2eca(values, s=info['coilSeparation'], f=info['freq'])*1e3 # mS/m
+                self.coils.append(coilName)
+        
+
+        
         # extraction of other attributes
         coilInfo = [self.getCoilInfo(c) for c in self.coils]
         self.freqs = [a['freq'] for a in coilInfo]
