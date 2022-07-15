@@ -262,6 +262,11 @@ class Survey(object):
             df['elevation'] = 0
         
         
+        # lat and lon to x,x
+        # if 'x' not in df.columns and 'y' not in df.columns and lat is in df.columns and '' is in df.columns:
+            # lat0=df['lat'].iloc[0]
+            # distance.distance(a[['lat','lon']].iloc[0].values, a[['lat','lon']].iloc[:10].values).m
+        
         
         if unit == 'ppm':
             print('Converting quadrature and inPhase columns to ppt units.')

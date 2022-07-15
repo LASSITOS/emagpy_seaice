@@ -379,7 +379,7 @@ class Problem(object):
     def invert(self, forwardModel='CS', method='L-BFGS-B', regularization='l2',
                alpha=0.07, beta=0.0, gamma=0.0, dump=None, bnds=None,
                options={}, Lscaling=False, rep=100, noise=0.05, nsample=100, 
-               annplot=False, threed=False, njobs=1):
+               annplot=False, threed=False, njobs=1, relativeMisfit=False):
         """Invert the apparent conductivity measurements.
         
         Parameters
@@ -435,7 +435,12 @@ class Problem(object):
             is used at all, which is useful for debugging. For n_jobs below -1,
             (n_cpus + 1 + n_jobs) are used. Thus for n_jobs = -2, all CPUs
             but one are used.
+        relativeMisfit: bool, optional
+            If True the relative misfit is used. In this way, for multifrequency 
+            inversion using Q the solution is not biased towards higher freq. 
+            that have higher quadrature values. Default is False
         """
+        
         mMinimize = ['L-BFGS-B','TNC','CG','Nelder-Mead']
         mMCMC = ['ROPE','SCEUA','DREAM', 'MCMC']
         mOther = ['ANN','Gauss-Newton','GPS']
@@ -597,11 +602,21 @@ class Problem(object):
             dump('Building and training ANN network\n')
             t0 = time.time()
             if bounds is None: # happen where all depths are fixed
-                vmin = np.nanpercentile(self.surveys[0].df[self.coils].values, 2)
-                vmax = np.nanpercentile(self.surveys[0].df[self.coils].values, 98)
+                
+                if forwardModel == 'Q':
+                    val=self.surveys[0].df[self.coilsQuad].values
+                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.cspacing)])
+                elif forwardModel == 'QP':
+                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.cspacing)])
+                    val=self.surveys[0].df[self.coilsInph].values+1j*self.surveys[0].df[self.coilsQuad].values
+                else:
+                    val=self.surveys[0].df[self.coils].values
+                
+                vmin = np.nanpercentile(val, 2)
+                vmax = np.nanpercentile(val, 98)
                 bounds = list(tuple(zip(np.ones(nc)*vmin, np.ones(nc)*vmax)))
                 dump('bounds = ' + str(bounds) + '\n')
-            self.buildANN(fmodel, bounds, noise=noise, nsample=nsample, dump=dump, iplot=annplot)
+            self.buildANN(fmodel, bounds, noise=noise, nsample=nsample, dump=dump, iplot=annplot,forwardModel = forwardModel)
             dump('Finish training the network ({:.2f}s)\n'.format(time.time() - t0))
             
         # build roughness matrix
@@ -624,8 +639,11 @@ class Problem(object):
 
         # data misfit
         def dataMisfit(p, obs, ini0):
-            misfit = fmodel(p, ini0) - obs
-            # TODO maybe set default to relative misfit?
+            if relativeMisfit:
+                misfit = (fmodel(p, ini0) - obs)/np.abs(obs)
+            else:
+                misfit = fmodel(p, ini0) - obs
+            
             # if forwardModel == 'Q':
                 # misfit = misfit*1e6 # to help the solver with small Q
                 # misfit = np.abs(misfit/obs)
@@ -652,6 +670,7 @@ class Problem(object):
                                + alpha*np.sum(np.abs(modelMisfit(p)))/np.sum(vc)
                                + beta*np.sum(np.abs(p - pn))/len(p)
                                + gamma*np.sum(np.abs(p - spn))/len(p))
+        
         elif regularization == 'l2':
             def objfunc(p, app, pn, spn, alpha, beta, gamma, ini0):
                 return np.sqrt(np.sum(dataMisfit(p, app, ini0)**2)/len(app)
@@ -1000,7 +1019,7 @@ class Problem(object):
             
     
     def buildANN(self, fmodel, bounds, noise=0.05, iplot=False, nsample=100,
-                 dump=None, epochs=500): # pragma: no cover
+                 dump=None, epochs=500,forwardModel ='CS'): # pragma: no cover
         """Build and train the artificial neural network on synthetic values
         derived from observed ECa values.
         
@@ -1048,9 +1067,14 @@ class Problem(object):
             eca[i,:] = addnoise(fmodel(param[i,:], ini0))
         
         vcols = list(self.coils.copy())
+        if forwardModel == 'Q':
+            vcols = list(self.coilsQuad.copy())
+        
         pcols = ['p{:d}'.format(i+1) for i in range(nc)]
         df = pd.DataFrame(np.c_[eca, param], columns=vcols+pcols)
-
+        # print(df.keys())
+      
+        
         # split dataset in training and testing
         df_train = df.sample(frac=0.8, random_state=0)
         df_test = df.drop(df_train.index)
@@ -1122,17 +1146,24 @@ class Problem(object):
                 ax.legend()
                 
                 ax = axs[1]
-                bins = np.arange(0, 100 + 10, 5)
+                
+                m=np.max(self.surveys[0].df[vcols].values)
+                
+                bins = np.arange(0, m+m/10, m/20)
                 mbins = bins[:-1] + np.diff(bins)
                 ax.plot([],[],'k-', label='Observed')
                 ax.plot([],[],'k:', label='Synthetic')
-                for i, c in enumerate(self.coils):
+                
+                for i, c in enumerate(vcols):
                     freq1, _ = np.histogram(self.surveys[0].df[c].values, bins=bins)
                     freq2, _ = np.histogram(df[c].values, bins=bins)
-                    cax = ax.step(mbins, freq1, linestyle='-', label=c)
-                    ax.step(mbins, freq2, linestyle=':', color=cax[0].get_color())
+                    cax = ax.step(mbins, freq1/len(self.surveys[0].df[c].values), linestyle='-', label=c)
+                    ax.step(mbins, freq2/len(df[c].values), linestyle=':', color=cax[0].get_color())
                 ax.legend()
-                ax.set_xlabel('ECa')
+                if forwardModel == 'Q':
+                    ax.set_xlabel('Quadrature')
+                else:
+                    ax.set_xlabel('ECa') 
                 ax.set_ylabel('Frequency')
                     
             
@@ -1400,7 +1431,7 @@ class Problem(object):
         If `coils` argument is specified a new Survey object will be added as well.
         """
         
-        dataType = float # flag if using IQ     
+        dataType = float # flag if using QP    
         
         if coils is None: # forward mode on inverted solution
             cspacing = self.cspacing
@@ -1489,6 +1520,8 @@ class Problem(object):
                 # print(l)
                 # print(d.shape)
                 df = pd.DataFrame(d, columns=l)
+            elif forwardModel == 'Q':
+                df = pd.DataFrame(apps, columns=[a+'_quad' for a in self.coils])
             else:
                 df = pd.DataFrame(apps, columns=self.coils)
             
@@ -1496,13 +1529,19 @@ class Problem(object):
         
         if iForward:
             self.surveys = []
+            print(len(df))
             for i, df in enumerate(dfs):
-                s = Survey()
-                s.readDF(df)
-                s.name = 'Model {:d}'.format(i+1)
-                self.surveys.append(s)
-        
+                if i==0:
+                    print(i)
+                    self.createSurvey(df)
+                    self.surveys[i].name = 'Model {:d}'.format(i+1)
+                else:
+                    s = Survey()
+                    s.readDF(df)
+                    s.name = 'Model {:d}'.format(i+1)
+                    self.surveys.append(s)
         return dfs
+    
     
     
     def computeSens(self, forwardModel='CS', coils=None, models=[], depths=[]):
@@ -2314,7 +2353,8 @@ class Problem(object):
         ax.set_ylabel('Elevation [m]')
         if len(self.surveys) > 0:
             ax.set_title(self.surveys[index].name)
-        ax.set_ylim([np.min(depths), np.max(depths)])
+        if ~np.isnan(depths).any() and ~np.isinf(depths).any():
+            ax.set_ylim([np.min(depths), np.max(depths)])
         ax.set_xlim([np.min(x), np.max(x)])
         def format_coord(i,j):
             col = int(np.floor(i))
@@ -2667,24 +2707,32 @@ class Problem(object):
             forwardModel = self.forwardModel
         dfsForward = self.forward(forwardModel=forwardModel)
         survey = self.surveys[index]
-        cols = survey.coils
+        
+        if self.forwardModel == 'Q':
+            cols = survey.coilsQuad
+        else:
+            cols = survey.coils
+        
         obsECa = survey.df[cols].values
         simECa = dfsForward[index][cols].values
         if ax is None:
             fig, ax = plt.subplots()
         xx = np.arange(survey.df.shape[0])
-        ax.plot(xx, obsECa, '.')
+        ax.plot(xx, obsECa, 'x')
         ax.set_prop_cycle(None)
-        ax.plot(xx, simECa, '^-')
+        ax.plot(xx, simECa, '.-')
         ax.legend(cols)
         ax.set_xlabel('Measurements')
-        ax.set_ylabel('EC [mS/m]')
-        ax.set_title('Dots (observed) vs triangles (modelled)')
+        if self.forwardModel == 'Q':
+            ax.set_ylabel('Quadrature [ppt]')
+        else:
+            ax.set_ylabel('EC [mS/m]')
+        ax.set_title('X (observed) vs dots (modelled)')
         
         
         
     def showOne2one(self, index=0, coil='all', forwardModel=None, ax=None,
-                    vmin=None, vmax=None):
+                    vmin=None, vmax=None,legend=True):
         """Show one to one plot with inversion results.
             
         Parameters
@@ -2698,6 +2746,7 @@ class Problem(object):
                 - CS : Cumulative sensitivity (default)
                 - FS : Full Maxwell solution with low-induction number (LIN) approximation
                 - FSeq : Full Maxwell solution without LIN approximation (see Andrade 2016)
+                - Q:    Use quadrature for forward model and plot quadrature instead of conductivity
             
             If `None` (default), the forward model used for the inversion is used.
         ax : matplotlib.Axes, optional
@@ -2706,12 +2755,16 @@ class Problem(object):
             Minimum ECa on the graph.
         vmax : float, optional
             Maximum ECa on the graph.
+        legennd : bool, show legend or not.
         """
         if forwardModel is None:
             forwardModel = self.forwardModel
         dfsForward = self.forward(forwardModel=forwardModel)
         survey = self.surveys[index]
-        cols = survey.coils
+        if forwardModel=='Q':
+            cols = survey.coilsQuad
+        else:
+            cols = survey.coils
         obsECa = survey.df[cols].values
         simECa = dfsForward[index][cols].values
         #print('number of nan', np.sum(np.isnan(obsECa)), np.sum(np.isnan(simECa)))
@@ -2731,9 +2784,14 @@ class Problem(object):
         ax.plot([vmin, vmax], [vmin, vmax], 'k-', label='1:1')
         ax.set_xlim([vmin, vmax])
         ax.set_ylim([vmin, vmax])
-        ax.set_xlabel('Observed ECa [mS/m]')
-        ax.set_ylabel('Simulated ECa [mS/m]')
-        ax.legend(['{:s} ({:.2f} %)'.format(c, r) for c, r in zip(cols, rmses)])
+        if forwardModel=='Q':
+            ax.set_xlabel('Observed Q [ppt]')
+            ax.set_ylabel('Simulated Q [ppt]')
+        else:
+            ax.set_xlabel('Observed ECa [mS/m]')
+            ax.set_ylabel('Simulated ECa [mS/m]')
+        if legend:
+            ax.legend(['{:s} ({:.2f} %)'.format(c, r) for c, r in zip(cols, rmses)])
     
     
     def filterRange(self, vmin=None, vmax=None):
