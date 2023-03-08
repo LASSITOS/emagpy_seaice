@@ -20,6 +20,7 @@ import matplotlib.tri as mtri
 from scipy.optimize import minimize
 from scipy.stats import linregress, gaussian_kde
 from scipy import interpolate
+from cmcrameri import cm as cmCrameri
 
 # for parallel computing
 from joblib import Parallel, delayed
@@ -78,6 +79,8 @@ class Problem(object):
         self.c = 0 # counter
         self.calibrated = False # flag for ERT calibration
         self.runningUI = False # True if run in UI, just change output of parallel stuff
+        self.calibratedSeaIce= False # Flag on Sei ice calibration.
+        
         
         # others
         self.annReplaced = 0 # number of measurement outliers by ANN
@@ -129,9 +132,12 @@ class Problem(object):
             self.surveys.append(survey)
         else: # check we have the same configuration than other survey
             check = [a == b for a,b, in zip(self.coils, survey.coils)]
-            if all(check) is True:
+            if all(check) == True:
                 self.surveys.append(survey)
-        
+                print(check)
+            
+            else:
+                print(check)
             
         
     def createTimeLapseSurvey(self, fnames, targetProjection=None, unit='ppt'):
@@ -1415,7 +1421,7 @@ class Problem(object):
             will be set. In this case you need to assign at models and depths (full forward mode).
             The ECa values generated will be incorporated as a new Survey object.
         noise : float, optional
-            Percentage of noise to add on the generated apparent conductivities.
+            Percentage of noise to add on the generated apparent conductivities. (0 to 1)
         models : list of numpy.array of float
             List of array of shape Nsample x Nlayer with conductiivty in mS/m. If empty,
             `self.models` will be used.
@@ -1529,10 +1535,10 @@ class Problem(object):
         
         if iForward:
             self.surveys = []
-            print(len(df))
+            # print(len(df))
             for i, df in enumerate(dfs):
                 if i==0:
-                    print(i)
+                    # print(i)
                     self.createSurvey(df)
                     self.surveys[i].name = 'Model {:d}'.format(i+1)
                 else:
@@ -3491,4 +3497,123 @@ class Problem(object):
             bestMisfits=np.asarray(bestMod)[:,-1]
     
         return bestConds, bestDepths, bestMisfits, paramSd, paramMin, paramMax    
+        
+
+
+
+#%% My functions
+
+    def calibrateSeaIce(self, depths,varConds=np.array([False, True, False]), cond0=np.array([20, 2650,200]), 
+                        bounds=[(-5, 5),(-5, 5),(-5, 5),(-5, 5),(-5, 5),(-5, 5),(2300, 3000)],
+                        options={}, method='L-BFGS-B', forwardModel='Q', one2one=None, ax_one2one=None ):
+        
+        """Calibrate Q data with sea ice thickness and water depth from manual data. 
+        A constant for each frequency (Q_obs'(f) = Q_obs(f) + C(f) ) and the layer conductivity (optional) 
+        are computed in order to minimize diffrence between observed Q and Q from forward model.
+        
+        
+        Parameters
+        ----------
+        depths : array
+            Manual sea ice and water depth data. 
+        
+        """
+        
+        self.freqs
+        x0=np.concatenate((np.zeros(len(self.coils)),cond0[varConds]))
+               
+        
+        def objfunc(p, obs, cond0, depths,varConds):
+                # unpack variables
+                C=p[:len(self.coils)]   
+                cond = cond0.copy()
+                if np.sum(varConds) > 0:
+                        cond[varConds] = p[-np.sum(varConds):]
+                
+                misfit = np.zeros([len(depths),len(self.coils)])    
+                for i,depth in enumerate(depths):
+                    Q_inv=np.imag(getQs(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx))*1e3
+                    misfit[i,:] = ( Q_inv  - (obs[i,:]+C) )/np.abs(obs[i,:] )
+                
+                return np.sqrt(np.sum(np.abs(misfit)**2)/len(obs))
+        
+               
+        res = minimize(objfunc, x0, args=(self.surveys[0].df[self.coilsQuad].values, cond0, depths,varConds),
+                       method=method, bounds=bounds, options=options)
+        
+    
+        # print(res)
+        self.CalibCond = cond0.copy()
+        self.CalibCond[varConds] = res.x[-np.sum(varConds):]
+        self.CalibCs=res.x[:len(self.coils)]
+        
+        self.calibratedSeaIce=True
+        
+        self.setModels([depths], [np.ones((len(depths), len(self.CalibCond)))*self.CalibCond])
+        if one2one:
+            self.calibSeaIce_one2one(ax=ax_one2one)
+        
+        
+        
+        return self.CalibCs, self.CalibCond
+        
+    
+    def calibSeaIce_one2one(self,ax=None,colors=None,vmin=None, vmax=None,legend=True):
+        
+        """Calibrate Q data with sea ice thickness and water depth from manual data. 
+        A constant for each frequency (Q_obs'(f) = Q_obs(f) + C(f) ) and the layer conductivity (optional) 
+        are computed in order to minimize diffrence between observed Q and Q from forward model.
+        
+        
+        Parameters
+        ----------
+        coil : str, optional
+            Specify which coil to plot. Default is all coils available.
+        ax : matplotlib.Axes, optional
+            If supplied, the graph will be plotted against `ax`.
+        vmin : float, optional
+            Minimal Y value.
+        vmax : float, optional
+            Maximial Y value.
+        legennd : bool, show legend or not.
+        colors : array, colors to use for each frequency
+        """
+
+        if colors is None:
+            colors=cmCrameri.davos(np.linspace(0,1,len(self.freqs)+1))
+
+        if ax is None:
+          fig, ax = plt.subplots(1, 1, figsize=(8, 5), sharex=True, sharey=True)
+        
+        obs=self.surveys[0].df[self.coilsQuad].values
+        
+        dfsForward=self.forward(forwardModel='Q', coils=self.coils, noise=0.00)
+        
+        
+        if vmin is None:
+            vmin = np.nanpercentile(obs.flatten(), 2)
+        if vmax is None:
+            vmax = np.nanpercentile(obs.flatten(), 98)
+        
+        def rRMSE(obs,mod):
+            return np.sqrt(np.sum( ((obs-mod )/obs)**2 )/obs.size) 
+        
+        rmses=[]
+        
+        for i,f in enumerate(self.freqs):
+            rmses.append(rRMSE(obs[:,i]+self.CalibCs[i],dfsForward[0][self.coilsQuad[i]]))
+            plt.plot(obs[:,i]+self.CalibCs[i],dfsForward[0][self.coilsQuad[i]],
+                     'x',c=colors[i],
+                     label='{:.0f} kHz ({:.3f} %)'.format(f/1000,rmses[i]*100))
+            plt.plot(obs[:,i],dfsForward[0][self.coilsQuad[i]],'2',c=colors[i])
+        plt.plot([0,ax.get_xlim()[1]],[0,ax.get_xlim()[1]],'--k')
+        plt.text(0.6,0.3,
+                 'x: calibrated data \n+: original data\nWater cond.={:.0f} mS/m\nrRMSE={:.3f} %'.format(self.CalibCond[1],
+                                                                                                         100*np.sum(rmses)/len(self.coils))
+                 , transform=ax.transAxes)
+        plt.legend()
+        plt.xlim(vmin,vmax)
+        plt.ylim(vmin,vmax)
+        plt.xlabel('Observed quadrature (ppt)')
+        plt.ylabel('Modeled quadrature (ppt)')
         
