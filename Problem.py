@@ -1491,19 +1491,19 @@ class Problem(object):
             elif forwardModel == 'QP':
                 dataType = complex
                 def fmodel(p, depth):
-                    return getQs(p, depth, cspacing, cpos,freqs, hx=hxs)*1e3
+                    return getQs(p, depth, cspacing, cpos,freqs, hx=hxs)*1e3   # !!!! 
             elif forwardModel == 'Q':
                 def fmodel(p, depth):
                     # print('depth',depth)
                     # print('cond',p)
-                    return np.imag(getQs(p, depth, cspacing, cpos,freqs, hx=hxs))*1e3
+                    return np.imag(getQs(p, depth, cspacing, cpos,freqs, hx=hxs))*1e3 # !!!! 
         else:
             raise ValueError('Forward model {:s} is not available.'
                              'Choose between CS, FSlin, FSeq, Q or QP'.format(forwardModel))
         
         def addnoise(x, level=0.05):
             if forwardModel == 'QP':
-                return x + 1j*np.random.randn(len(x))*np.imag(x)*level+ np.random.randn(len(x))*np.real(x)*level-1
+                return x + 1j*np.random.randn(len(x))*np.imag(x)*level+ np.random.randn(len(x))*np.real(x)*level-1e3   # !!!! 
             else:
                 return x + np.random.randn(len(x))*x*level
 
