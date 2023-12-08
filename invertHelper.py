@@ -290,7 +290,7 @@ def getRn2(lamb, sigg, f, d): # compute reflexion coefficients
     imagPart = 2*np.pi*f*mu_0*np.repeat(sigma[:,None], len(lamb), axis=1)
     gamma = np.sqrt(realPart.T + 1j*imagPart)
 #    gamma = np.sqrt(lamb**2 + 1j*2*np.pi*f*mu_0*sigma)
-    R = np.zeros((sigmaLen, len(lamb)), dtype=np.complex)#*np.nan
+    R = np.zeros((sigmaLen, len(lamb)), dtype=complex)#*np.nan
     R[-1,:] = 0+0j # no waves from the lower half space
     for i in range(sigmaLen-2, -1, -1): # it's recursive so needs for loop
         R[i,:] = (gamma[i,:]-gamma[i+1,:])/(gamma[i,:]+gamma[i+1,:]) \
