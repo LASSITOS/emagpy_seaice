@@ -160,7 +160,8 @@ class Survey(object):
         self.sensor = None # sensor name (+ company)
         self.coils = [] # columns with the coils names and configuration
         self.cpos = [] # orientation of the coils
-        self.cspacing = [] # spacing between Tx and Rx [m]
+        self.rxtxspacing = [] # spacing between Tx and Rx [m]
+        self.bxtxspacing = [] # spacing between Tx and bucking coil bx [m]
         self.coilsInph = [] # name of the coils with inphase value in [ppt]
         self.coilsErr = [] # stacking error
         self.coilsQuad = [] # name of the coils with quadrature value in ppt
@@ -295,7 +296,8 @@ class Survey(object):
         coilInfo = [self.getCoilInfo(c) for c in self.coils]
         self.freqs = [a['freq'] for a in coilInfo]
         self.hx = [a['height'] for a in coilInfo]
-        self.cspacing = [a['coilSeparation'] for a in coilInfo]
+        self.rxtxspacing = [a['coilSeparation'] for a in coilInfo]
+        self.bxtxspacing = [a['BuckcoilSeparation'] for a in coilInfo]
         self.cpos = [a['orientation'] for a in coilInfo]
         self.df = df
         self.sensor = sensor
@@ -311,19 +313,29 @@ class Survey(object):
         orientation = arg[:3]
         b = arg[3:].split('f')
         coilSeparation = float(b[0])
+        BuckcoilSeparation=0
         # NOTE could make this more flexible with regexp if h is before f and so on
         if len(b) > 1:
             c = b[1].split('h')
             freq = float(c[0])
             if len(c) > 1:
-                height = float(c[1])
+                d=c[1].split('bx')
+                height = float(d[0])
+                if len(d) > 1:
+                    if float(d[1])!=0:
+                        BuckcoilSeparation=float(d[1])
+                    else:
+                        BuckcoilSeparation=0
             else:
                 height = 0
+                BuckcoilSeparation=0
         else:
             freq = 30000 # Hz default is not specified !!
             height = 0
+            BuckcoilSeparation=0
         return {'orientation': orientation,
                 'coilSeparation': coilSeparation,
+                'BuckcoilSeparation':BuckcoilSeparation,
                 'freq': freq,
                 'height': height}
         
@@ -338,7 +350,8 @@ class Survey(object):
         """
         del self.coils[icoil]
         del self.cpos[icoil]
-        del self.cspacing[icoil]
+        del self.rxtxspacing[icoil]
+        del self.bxtxspacing[icoil]
         del self.hx[icoil]
         del self.freqs[icoil]
     
@@ -957,7 +970,7 @@ class Survey(object):
             Name of the calibration used. Either 'F-0m' of 'F-1m'.
         """
         df = self.df.copy()
-        coils = ['{:s}{:.2f}'.format(a.upper(),b) for a,b in zip(self.cpos, self.cspacing)]
+        coils = ['{:s}{:.2f}'.format(a.upper(),b) for a,b in zip(self.cpos, self.rxtxspacing)]
         if calib == 'F-0m':
             gfcoefs = {'HCP1.48': 24.87076856,
                        'HCP2.82': 7.34836983,
@@ -973,7 +986,7 @@ class Survey(object):
                        'VCP1.18': 12.744378}
             for i, coil in enumerate(coils):
                 qvalues = 0+df[self.coils[i]].values/gfcoefs[coil]*1e-3j
-                df.loc[:, self.coils[i]] = Q2eca(qvalues, self.cspacing[i], f=self.freqs[i])*1000 # mS/m
+                df.loc[:, self.coils[i]] = Q2eca(qvalues, self.rxtxspacing[i], f=self.freqs[i])*1000 # mS/m
         if calib == 'F-1m':
             gfcoefs = {'HCP1.48': 43.714823,
                        'HCP2.82': 9.22334343,
@@ -986,7 +999,7 @@ class Survey(object):
             '''
             for i, coil in enumerate(coils):
                 qvalues = 0+df[self.coils[i]].values/gfcoefs[coil]*1e-3j # in part per thousand
-                df.loc[:, self.coils[i]] = Q2eca(qvalues, self.cspacing[i], f=self.freqs[i])*1000
+                df.loc[:, self.coils[i]] = Q2eca(qvalues, self.rxtxspacing[i], f=self.freqs[i])*1000
         self.df = df
         print('gfCorrection: {:s} calibrated ECa converted to LIN ECa'.format(calib))
     
@@ -1116,7 +1129,7 @@ class Survey(object):
             self.coilsInph = coilsInph
             coilInfo = [self.getCoilInfo(c) for c in self.coils]
             self.freqs = np.repeat([freq], len(self.coils))
-            self.cspacing = [a['coilSeparation'] for a in coilInfo]
+            self.rxtxspacing = [a['coilSeparation'] for a in coilInfo]
             self.cpos = [a['orientation'] for a in coilInfo]
             self.hx = np.repeat([hx], len(self.coils))*0 # as we corrected it before
             self.df = df

@@ -56,7 +56,8 @@ class Problem(object):
         self.coilsErr = []
         self.coilsQuad = []
         self.cpos = []
-        self.cspacing = []
+        self.rxtxspacing = []
+        self.bxtxspacing = []
         self.hx = []
         self.projection = None # string of projection as EPSG
         
@@ -123,7 +124,8 @@ class Problem(object):
         if len(self.surveys) == 0:
             self.coils = survey.coils.copy()
             self.freqs = survey.freqs.copy()
-            self.cspacing = survey.cspacing.copy()
+            self.rxtxspacing = survey.rxtxspacing.copy()
+            self.bxtxspacing = survey.bxtxspacing.copy()
             self.cpos = survey.cpos.copy()
             self.hx = survey.hx.copy()
             self.coilsInph = survey.coilsInph.copy()
@@ -235,7 +237,8 @@ class Problem(object):
         self.coilsQuad = mergedSurvey.coilsQuad
         self.coilsErr = mergedSurvey.coilsErr
         self.freqs = mergedSurvey.freqs
-        self.cspacing = mergedSurvey.cspacing
+        self.rxtxspacing = mergedSurvey.rxtxspacing
+        self.bxtxspacing = mergedSurvey.bxtxspacing
         self.cpos = mergedSurvey.cpos
         self.hx = mergedSurvey.hx
             
@@ -276,7 +279,8 @@ class Problem(object):
         self.coilsQuad = survey.coilsQuad
         self.coilsErr = survey.coilsErr
         self.freqs = survey.freqs
-        self.cspacing = survey.cspacing
+        self.rxtxspacing = survey.rxtxspacing
+        self.bxtxspacing = survey.bxtxspacing
         self.cpos = survey.cpos
         self.hx = survey.hx
         self.surveys.append(survey)
@@ -525,15 +529,17 @@ class Problem(object):
             if np.sum(vc) > 0:
                 cond[vc] = p[np.sum(vd):]
             if forwardModel == 'CS':
-                return fCS(cond, depth, self.cspacing, self.cpos, hx=self.hx)
+                return fCS(cond, depth, self.rxtxspacing, self.cpos, hx=self.hx)
             elif forwardModel == 'FSlin':
-                return fMaxwellECa(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx)
+                return fMaxwellECa(cond, depth, self.rxtxspacing, self.cpos, f=self.freqs, hx=self.hx)
             elif forwardModel == 'FSeq':
-                return fMaxwellQ(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx)
+                return fMaxwellQ(cond, depth, self.rxtxspacing, self.cpos, f=self.freqs, hx=self.hx)
             elif forwardModel == 'Q':
-                return np.imag(getQs(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx))*1e3
+                return np.imag(getQs(cond, depth, self.rxtxspacing, self.cpos, f=self.freqs, hx=self.hx,bxtx=self.bxtxspacing))*1e3
+            elif forwardModel == 'I':
+                return np.real(getQs(cond, depth, self.rxtxspacing, self.cpos, f=self.freqs, hx=self.hx,bxtx=self.bxtxspacing))*1e3
             elif forwardModel == 'QP':
-                return getQs(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx)*1e3
+                return getQs(cond, depth, self.rxtxspacing, self.cpos, f=self.freqs, hx=self.hx,bxtx=self.bxtxspacing)*1e3
 
         # define bounds
         if bnds is not None:
@@ -611,10 +617,13 @@ class Problem(object):
                 
                 if forwardModel == 'Q':
                     val=self.surveys[0].df[self.coilsQuad].values
-                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.cspacing)])
+                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.rxtxspacing)])
                 elif forwardModel == 'QP':
-                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.cspacing)])
+                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.rxtxspacing)])
                     val=self.surveys[0].df[self.coilsInph].values+1j*self.surveys[0].df[self.coilsQuad].values
+                elif forwardModel == 'I':
+                        # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.rxtxspacing)])
+                        val=self.surveys[0].df[self.coilsInph].values
                 else:
                     val=self.surveys[0].df[self.coils].values
                 
@@ -654,7 +663,7 @@ class Problem(object):
                 # misfit = misfit*1e6 # to help the solver with small Q
                 # misfit = np.abs(misfit/obs)
             if forwardModel == 'QP':
-                misfit = np.sqrt(np.imag(misfit)**2 + 1e-9*np.real(misfit)**2)          #!!!!!!! weight factor for inphase not flexble !!!!!! 
+                misfit = np.sqrt(np.imag(misfit)**2 + np.real(misfit)**2)          #!!!!!!! weight factor for inphase not flexble !!!!!! 
                 # the inphase part makes this misfit quite stable (and so
                 # difficult for solver to optimize), adding a coefficient helps
                 # misfit = np.imag(misfit)
@@ -768,53 +777,7 @@ class Problem(object):
                 ie = np.abs(results['like1']) < np.nanpercentile(np.abs(results['like1']), 10)
                 outstd = np.array([np.nanstd(results[col][ie]) for col in cols])
                 out = (outval, outstd)
-                
-                # below is for paper figure on MCMC inversion
-                # vals = np.array([results[col] for col in cols]).T
-                # ibest = np.argmin(np.abs(results['like1']))
-                # bmisfit = np.abs(results[ibest]['like1'])
-                # print('lowest misfit is: {:.2f} with param'.format(
-                #     bmisfit), results[ibest][cols])
-                # samples = [results[col] for col in cols]
-                # pmode = np.array([a[np.argmax(gaussian_kde(a)(a))] for a in samples])
-                # pmisfit = spotpy.objectivefunctions.rmse(obs, fmodel(pmode, ini0))
-                # print('mode misfit is: {:.2f} with param'.format(pmisfit), pmode)
-                # stds[i,:] = np.std(vals, axis=0)
-                # tmisfit = spotpy.objectivefunctions.rmse(obs, fmodel(np.array([0.5, 20, 40]), ini0))
-                
-                # import seaborn as sns
-                # fig, axs = plt.subplots(1, 3, figsize=(8,2.5))
-                # ax = axs[0]
-                # ax.set_title('(a) depth m={:.1f} std={:.1f}'.format(
-                # np.mean(vals[:,0]), np.std(vals[:,0])))
-                # # ax.hist(vals[:,0], bins=20)
-                # sns.kdeplot(vals[:,0], ax=ax)
-                # # ax.axvline(pmode[0], color='m', linestyle='-')
-                # ax.axvline(0.5, color='r', linestyle='--')
-                # ax.axvline(vals[ibest,0], color='lime', linestyle='--')
-                # ax.set_ylabel('KDE')
-                # ax = axs[1]
-                # ax.set_title('(b) layer1 m={:.1f} std={:.1f}'.format(
-                # np.mean(vals[:,1]), np.std(vals[:,1])))
-                # # ax.hist(vals[:,1], bins=20)
-                # sns.kdeplot(vals[:,1], ax=ax)
-                # # ax.axvline(pmode[1], color='m', linestyle='-')
-                # ax.axvline(20, color='r', linestyle='--')
-                # ax.axvline(vals[ibest,1], color='lime', linestyle='--')
-                # ax.set_ylabel('KDE')
-                # ax = axs[2]
-                # ax.set_title('(c) layer2 m={:.1f} std={:.1f}'.format(
-                # np.mean(vals[:,2]), np.std(vals[:,2])))
-                # # ax.hist(vals[:,2], bins=20)
-                # sns.kdeplot(vals[:,2], ax=ax)
-                # # ax.axvline(pmode[2], color='m', linestyle='-', label='{:.2f}'.format(pmisfit))
-                # ax.axvline(40, color='r', linestyle='--', label='True (RMSE={:.2f})'.format(tmisfit))
-                # ax.axvline(vals[ibest,2], color='lime', linestyle='--', label='Best est. (RMSE={:.2f})'.format(bmisfit))
-                # ax.legend(fontsize=8)
-                # ax.set_ylabel('KDE')
-                # fig.tight_layout()
-                # fig.savefig('figures/mcmc.jpg', dpi=500)
-                # fig.show()
+
                                 
             return out
         
@@ -857,9 +820,11 @@ class Problem(object):
                 obs = apps[j,:]
                 if forwardModel == 'Q':
                     obs = quad[j,:]
-                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.cspacing)])
-                if forwardModel == 'QP':
-                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.cspacing)])
+                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.rxtxspacing)])
+                elif forwardModel == 'I':
+                        obs = inph[j,:]
+                elif forwardModel == 'QP':
+                    # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.rxtxspacing)])
                     obs = 1j*quad[j,:] + inph[j,:]
                     
                 # define previous profile in case we want to lateral constrain
@@ -917,7 +882,7 @@ class Problem(object):
                         depth[j,vd] = out[:np.sum(vd)]
                         model[j,vc] = out[np.sum(vd):]
                         if forwardModel == 'QP':
-                            obs = np.sqrt(np.imag(obs)**2 + 1e-9*np.real(obs)**2)                         ## Usinng damping factor for Inphase!!!!!!!!!! Should be a variable not a constant in code!!!!!!!!!!!!
+                            obs = np.sqrt(np.imag(obs)**2 + np.real(obs)**2)                         #!!! Usinng damping factor for Inphase!!!!!!!!!! Should be a variable not a constant in code!!!!!!!!!!!!
                         rmse[j] = np.sqrt(np.sum((dataMisfit(out, obs, ini0)/obs)**2)/len(obs))*100
                     except Exception as e:
                         print('Killed:' , e, '\nj:',j)
@@ -1214,10 +1179,10 @@ class Problem(object):
             def dump(x):
                 print(x, end='')
                 
-        J = buildJacobian(depths0, self.cspacing, self.cpos)
+        J = buildJacobian(depths0, self.rxtxspacing, self.cpos)
         L = buildSecondDiff(J.shape[1])
         def fmodel(p):
-            return fCS(p, depths0, self.cspacing, self.cpos, hx=self.hx)
+            return fCS(p, depths0, self.rxtxspacing, self.cpos, hx=self.hx)
         
         # fCS is automatically adding a leading 0 but not buildJacobian
         def dataMisfit(p, app):
@@ -1394,7 +1359,8 @@ class Problem(object):
         """
         del self.coils[icoil]
         del self.cpos[icoil]
-        del self.cspacing[icoil]
+        del self.rxtxspacing[icoil]
+        del self.bxtxspacing[icoil]
         del self.hx[icoil]
         del self.freqs[icoil]
         for s in self.surveys:
@@ -1417,9 +1383,11 @@ class Problem(object):
         coils : list of str, optional
             If `None`, then the default attribute of the object will be used (foward
             mode on inverted solution).
-            If specified, the coil spacing, orientation and height above the ground
+            If specified, the coils spacing, orientation and height above the ground
             will be set. In this case you need to assign at models and depths (full forward mode).
             The ECa values generated will be incorporated as a new Survey object.
+            Example: HCP1.950f3587.0h5.3bx0.6'  
+            
         noise : float, optional
             Percentage of noise to add on the generated apparent conductivities. (0 to 1)
         models : list of numpy.array of float
@@ -1440,7 +1408,8 @@ class Problem(object):
         dataType = float # flag if using QP    
         
         if coils is None: # forward mode on inverted solution
-            cspacing = self.cspacing
+            rxtxspacing = self.rxtxspacing
+            bxtxspacing = self.bxtxspacing
             cpos = self.cpos
             hxs = self.hx
             freqs = self.freqs
@@ -1451,25 +1420,31 @@ class Problem(object):
             self.coils = coils
             self.depths0 = self.depths.copy()
             self.conds0 = self.models.copy()
-            cspacing = []
+            rxtxspacing = []
+            bxtxspacing = []
             cpos = []
             hxs = []
             freqs = []
             for arg in coils:
                 cpos.append(arg[:3].lower())
                 b = arg[3:].split('f')
-                cspacing.append(float(b[0]))
+                rxtxspacing.append(float(b[0]))
                 if len(b) > 1:
                     c = b[1].split('h')
                     freqs.append(float(c[0]))
                     if len(c) > 1:
-                        hxs.append(float(c[1]))
+                        d=c[1].split('bx')
+                        hxs.append(float(d[0]))
+                        if len(d) > 1:
+                            if float(d[1])!=0:
+                                bxtxspacing.append(float(d[1]))
                     else:
                         hxs.append(0)
                 else:
                     freqs.append(30000) # Hz default is not specified !!
                     hxs.append(0)
-            self.cspacing = cspacing
+            self.rxtxspacing = rxtxspacing
+            self.bxtxspacing = bxtxspacing
             self.cpos = cpos
             self.hx = hxs
             self.freqs = freqs
@@ -1481,29 +1456,32 @@ class Problem(object):
         if forwardModel in ['CS','FSlin','FSeq','QP','Q']:
             if forwardModel == 'CS':
                 def fmodel(p, depth):
-                    return fCS(p, depth, cspacing, cpos, hx=hxs)
+                    return fCS(p, depth, rxtxspacing, cpos, hx=hxs)
             elif forwardModel == 'FSlin':
                 def fmodel(p, depth):
-                    return fMaxwellECa(p, depth, cspacing, cpos, f=freqs, hx=hxs)
+                    return fMaxwellECa(p, depth, rxtxspacing, cpos, f=freqs, hx=hxs)
             elif forwardModel == 'FSeq':
                 def fmodel(p, depth):
-                    return fMaxwellQ(p, depth, cspacing, cpos, f=freqs, hx=hxs)
+                    return fMaxwellQ(p, depth, rxtxspacing, cpos, f=freqs, hx=hxs)
             elif forwardModel == 'QP':
                 dataType = complex
                 def fmodel(p, depth):
-                    return getQs(p, depth, cspacing, cpos,freqs, hx=hxs)*1e3   # !!!! 
+                    return getQs(p, depth, rxtxspacing, cpos,freqs, hx=hxs,bxtx=bxtxspacing)*1e3   # !!!! 
             elif forwardModel == 'Q':
                 def fmodel(p, depth):
                     # print('depth',depth)
                     # print('cond',p)
-                    return np.imag(getQs(p, depth, cspacing, cpos,freqs, hx=hxs))*1e3 # !!!! 
+                    return np.imag(getQs(p, depth, rxtxspacing, cpos,freqs, hx=hxs,bxtx=bxtxspacing))*1e3 # !!!! 
+            elif forwardModel == 'I':
+                def fmodel(p, depth):
+                    return np.real(getQs(p, depth, rxtxspacing, cpos, freqs, hx=hxs,bxtx=bxtxspacing))*1e3
         else:
             raise ValueError('Forward model {:s} is not available.'
                              'Choose between CS, FSlin, FSeq, Q or QP'.format(forwardModel))
         
         def addnoise(x, level=0.05):
             if forwardModel == 'QP':
-                return x + 1j*np.random.randn(len(x))*np.imag(x)*level+ np.random.randn(len(x))*np.real(x)*level-1e3   # !!!! 
+                return x + 1j*np.random.randn(len(x))*np.imag(x)*level+ np.random.randn(len(x))*np.real(x)*level  # !!!! 
             else:
                 return x + np.random.randn(len(x))*x*level
 
@@ -1711,7 +1689,7 @@ class Problem(object):
         # compute local sensitivity for a 1D profile given coil configurations of the survey
         ksens = Problem()
         cond = np.ones((1, 100))
-        depth = np.linspace(0.05, 3*np.max(self.cspacing), cond.shape[1]-1)
+        depth = np.linspace(0.05, 3*np.max(self.rxtxspacing), cond.shape[1]-1)
         out = ksens.computeSens(forwardModel='CS', coils=self.coils, models=[cond], depths=[depth[None,:]])
         sens = out[0].squeeze(-1) # depth x coils
         mdepths = np.r_[depth[0]/2, depth[:-1] + np.diff(depth)/2, depth[-1] + (depth[-1]-depth[-2])/2]
@@ -2855,7 +2833,7 @@ class Problem(object):
         if alphas is None:
             alphas = np.logspace(-3,2,20)
         def fmodel(p):
-            return fCS(p, depths0, self.cspacing, self.cpos)
+            return fCS(p, depths0, self.rxtxspacing, self.cpos)
         L = buildSecondDiff(len(conds0))
         def dataMisfit(p, app):
             return fmodel(p) - app
@@ -3089,13 +3067,13 @@ class Problem(object):
         # define the forward model
         if forwardModel == 'CS':
             def fmodel(p):
-                return fCS(p, depths, survey.cspacing, survey.cpos, hx=survey.hx)
+                return fCS(p, depths, survey.rxtxspacing, survey.cpos, hx=survey.hx)
         elif forwardModel == 'FSlin':
             def fmodel(p):
-                return fMaxwellECa(p, depths, survey.cspacing, survey.cpos, f=survey.freqs, hx=survey.hx)
+                return fMaxwellECa(p, depths, survey.rxtxspacing, survey.cpos, f=survey.freqs, hx=survey.hx)
         elif forwardModel == 'FSeq':
             def fmodel(p):
-                return fMaxwellQ(p, depths, survey.cspacing, survey.cpos, f=survey.freqs, hx=survey.hx)
+                return fMaxwellQ(p, depths, survey.rxtxspacing, survey.cpos, f=survey.freqs, hx=survey.hx)
     
         # compute the forward response
         simECa = np.zeros((dfec.shape[0], len(survey.coils)))
@@ -3501,7 +3479,7 @@ class Problem(object):
 
 
 
-#%% My functions
+#%% My functions Ac.Cap.
 
     def calibrateSeaIce(self, depths,varConds=np.array([False, True, False]), cond0=np.array([20, 2650,200]), 
                         bounds=[(-5, 5),(-5, 5),(-5, 5),(-5, 5),(-5, 5),(-5, 5),(2300, 3000)],
@@ -3532,7 +3510,7 @@ class Problem(object):
                 
                 misfit = np.zeros([len(depths),len(self.coils)])    
                 for i,depth in enumerate(depths):
-                    Q_inv=np.imag(getQs(cond, depth, self.cspacing, self.cpos, f=self.freqs, hx=self.hx))*1e3
+                    Q_inv=np.imag(getQs(cond, depth, self.rxtxspacing, self.cpos, f=self.freqs, hx=self.hx))*1e3
                     misfit[i,:] = ( Q_inv  - (obs[i,:]+C) )/np.abs(obs[i,:] )
                 
                 return np.sqrt(np.sum(np.abs(misfit)**2)/len(obs))

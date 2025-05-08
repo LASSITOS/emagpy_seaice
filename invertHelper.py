@@ -281,6 +281,9 @@ def eca2Q(eca, s, f=30000):
 # --------------------- getQ2 faster
 #@njit
 def getRn2(lamb, sigg, f, d): # compute reflexion coefficients
+    """ Compute reflexion coefficients.
+                                                        
+    """                                      
     sigma = np.array([0] + sigg.tolist()) # sigma 0 is above the ground
     h = np.array([0] + d.tolist() + [0]) # last one won't be used, because Rn+1 = 0 and
     # first zero won't be used because we never use hn, always hn+1, just
@@ -325,46 +328,119 @@ def getQ2(cpos, s, sig, f, h, typ=None):
         hankel = np.sum(w*K/s) # hankel transform
         return 0-s**3*hankel
   
-def getQs(cond, depths, s, cpos, f, hx=0):
+  
+  
+  
+  ## old function!!
+# def getQs(cond, depths, s, cpos, f, hx=0):
+    # """
+    # Compute quadrature and inphase using Maxwell equation.
+    # """
+    # if len(cond)-1 != len(depths):
+        # raise ValueError('len(cond)-1 should be equal to len(depths).')
+    # if len(s) != len(cpos):
+        # raise ValueError('len(s) should be equal to len(cpos).')
+    # app = np.zeros(len(cpos), dtype=complex)
+    # h = np.r_[depths[0], np.diff(depths)]
+    # if isinstance(hx, int) or isinstance(hx, float):
+        # hx = [hx] * len(cpos)
+    # if isinstance(f, int) or isinstance(f, float):
+        # f = [f] * len(cpos)
+    # cond = cond*1e-3
+    # for i in range(len(cpos)):
+        # if hx[i] > 0: # adding air layer of 0 mS/m
+            # thick = np.r_[hx[i], h]
+            # sig = np.r_[0, cond]
+        # else:
+            # thick = h
+            # sig = cond
+        # app[i] = getQ2(cpos[i], s[i], sig, f=f[i], h=thick)
+    # return app
+
+
+def getQs(cond, depths, rxtx, cpos,  f , hx=0,bxtx=[]):   
     """
-    Compute quadrature and inphase using Maxwell equation.
+    Forward model used with bucking coil correction. 
+    Compute inphase ratio I and quadrature ratio Q using Maxwell equation. 
+    
+    Bucking coil expansion by Mara Neudert. 
+    
+    Primary field response=1 is subtracted even if bucking coil distance is not provided!!!!
+
+    Parameters
+    ----------
+    cond : list/array
+        conductivity for each layer
+    depths : list/array
+        list depths. LAst layer is considered infinite!  len(depths)=len(cond)-1 
+    rxtx : list/array
+        distance Tx-Rx
+    cpos : list/array of strings
+        Coils geometry for each coil.
+    f : TYPE
+        frequency 
+    hx : TYPE, optional
+        thickness of air layer of 0 mS/m. The default is 0.
+    bxtx : list/array
+        distance bucking coil: Bx-Tx. The default is []. In that case ignore bucking coil! Also in case bxtx=0
+
+    Raises
+    ------
+    ValueError
+        DESCRIPTION.
+
+    Returns
+    -------
+    TYPE
+        DESCRIPTION.
+
     """
+
     if len(cond)-1 != len(depths):
         raise ValueError('len(cond)-1 should be equal to len(depths).')
-    if len(s) != len(cpos):
-        raise ValueError('len(s) should be equal to len(cpos).')
-    app = np.zeros(len(cpos), dtype=complex)
-    h = np.r_[depths[0], np.diff(depths)]
+    if len(rxtx) != len(cpos):
+        raise ValueError('len(rxtx) should be equal to len(cpos).')
+    if len(bxtx)>0 and len(bxtx) != len(cpos):
+        raise ValueError('len(bxtx) should be 0 or equal to len(cpos).')
+    
     if isinstance(hx, int) or isinstance(hx, float):
-        hx = [hx] * len(cpos)
+        hx = [hx] * len(rxtx)
     if isinstance(f, int) or isinstance(f, float):
-        f = [f] * len(cpos)
-    cond = cond*1e-3
-    for i in range(len(cpos)):
-        if hx[i] > 0: # adding air layer of 0 mS/m
+        f = [f] * len(rxtx)
+    h = np.r_[depths[0], np.diff(depths)] # layers thickness  
+    response_rx = np.zeros(len(rxtx), dtype=complex)*np.nan
+    response_bx = np.zeros(len(rxtx), dtype=complex)*np.nan
+    cond = cond*1e-3 # convert to S/m    
+    #response at receiver
+    for i in range(len(rxtx)):
+        if hx[i] != 0: # adding air layer of 0 mS/m
             thick = np.r_[hx[i], h]
             sig = np.r_[0, cond]
         else:
             thick = h
             sig = cond
-        app[i] = getQ2(cpos[i], s[i], sig, f=f[i], h=thick)
-    return app
-
-
-#sigH = 60*1e-3 # S/m
-#sig = np.ones(3)*sigH
-#f = 30000
-#h = np.array([0.3, 0.5])
-#s = 0.71
-#cpos = 'hcp'
-#lamb = hankel5_lamb/s
-#%timeit Ka = getRn(lamb, sig, f, h) # 55 ms
-#%timeit Kb = getRn2(lamb, sig, f, h) # 662 us
-#%timeit getQ(cpos, s, sig, f, h) # 47.5 ms
-#getQ2(cpos, s, sig, f, h) # 672 us !
-#%timeit getQhomogeneous('hcp',0.71, 60, 30000)
-#print(getQ2('hcp', 0.71, np.array([60, 60]), 30000, np.array([1])))
-#print(getQ('hcp', 0.71, np.array([60, 60]), 30000, np.array([1])))
+        response_rx[i] = getQ2(cpos[i], rxtx[i], sig, f[i], thick)
+       
+    #response at bucking coil
+    if len(bxtx)>0:
+        if isinstance(bxtx[0], int) or isinstance(bxtx[0], float):
+            for i in range(len(rxtx)):
+                if bxtx[i]==0:
+                    response_bx[i] = 1
+                else:
+                    if hx[i] != 0: # adding air layer of 0 mS/m
+                        thick = np.r_[hx[i], h]
+                        sig = np.r_[0, cond]
+                    else:
+                        thick = h
+                        sig = cond
+                    response_bx[i] = getQ2(cpos[i], bxtx[i], sig, f[i], thick)
+        else:
+            raise ValueError('rxtx shuold contain int or float!')   
+    else: 
+        for i in range(len(rxtx)):
+            response_bx[i] = 1
+    return response_rx - response_bx
 
 
 # definition of forward model used
@@ -466,23 +542,6 @@ def fMaxwellQI(cond, depths, s, cpos, hx=0, f=30000, maxiter=50):
 
 
 
-# test
-#cpos = 'hcp'
-#s = 0.32
-#cond = np.array([60,60,60])*1e-3 # [S/m]
-#f = 30000
-#h = [0.4, 0.7]
-#print(getQ(cpos, s, cond, f, h))
-#print(getQhomogeneous(cpos, s, cond, f))
-#Qobs = np.imag(getQ(cpos, s, cond, f, h))
-#def objfunc(sig):
-#    sigg = np.ones(len(cond))*sig
-#    Qmod = np.imag(getQ(cpos, s, sigg, f, h))
-#    return np.abs(Qmod - Qobs)
-#sig0 = Q2eca(getQ(cpos, s, cond, f, h), s, f) # still in S/m
-#print(sig0)
-#zero = newton(objfunc, sig0)*1e3 # back to mS/m
-#print(zero)
 
 
 
@@ -646,26 +705,6 @@ def buildSecondDiff(ndiag):
     return a
 
 
-#%% test bench
-# sigma = np.array([30, 30, 30, 30]) # layers conductivity [mS/m]
-# depths = np.array([0.3, 0.7, 2]) # thickness of each layer (last is infinite)
-# f = 30000 # Hz frequency of the coil
-# cpos = np.array(['hcp','hcp','hcp','vcp','vcp','vcp']) # coil orientation
-# #cpos = np.array(['hcp','hcp','hcp','prp','prp','prp']) # coil orientation
-# cspacing = np.array([0.32, 0.71, 1.18, 0.32, 0.71, 1.18])
-# cspacing = np.array([1.48, 2.82, 4.49, 1.48, 2.82, 4.49]) # explorer
-
-# print('fCS:', fCS(sigma, depths, cspacing, cpos)) # 333 us
-# print('fMaxwellECa:', fMaxwellECa(sigma, depths, cspacing, cpos)) # 5.7 ms
-# print('fMaxwellQ:', fMaxwellQ(sigma, depths, cspacing, cpos)) # 12 ms
-#print('fCSandrade:', fCSandrade(sigma, depths, cspacing, cpos, hx=0))
-#%timeit getQs(sigma, depths, cspacing, cpos, f) # 5.75 ms (same as fMaxwellECa)
-
-#print('fCS:', fCS(sigma, depths, cspacing, cpos, hx=1))
-#print('fCS:', fCS(sigma, depths, cspacing, cpos, hx=1, rescaled=True))
-#print('fCSandrade:', fCSandrade(sigma, depths, cspacing, cpos, hx=1))
-
-
 #%% usefull functions for the direct inversion
 def buildJacobian(depths, s, cpos):
     '''Build Jacobian matrix for Cumulative Sensitivity based inversion.
@@ -694,5 +733,4 @@ def buildJacobian(depths, s, cpos):
         jacob[i,-1] = cs[-1]
     return jacob
 
-# test
-#J = buildJacobian([0.5, 0.7],[0.32, 0.72, 1.14],['vcp','vcp','vcp'])
+
