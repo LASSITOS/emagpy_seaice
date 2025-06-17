@@ -399,6 +399,7 @@ class Problem(object):
                 - CS : Cumulative sensitivity (default)
                 - FSlin : Full Maxwell solution with low-induction number (LIN) approximation
                 - FSeq : Full Maxwell solution without LIN approximation (see Andrade et al., 2016)
+                - Q,I,QIQI :use quadrature, inphase or both! to be used for sea ice!
         method : str, optional
             Name of the optimization method either L-BFGS-B, TNC, CG or Nelder-Mead
             to be passed to `scipy.optimize.minmize()` or ROPE, SCEUA, DREAM, MCMC for
@@ -538,7 +539,7 @@ class Problem(object):
                 return np.imag(getQs(cond, depth, self.rxtxspacing, self.cpos, f=self.freqs, hx=self.hx,bxtx=self.bxtxspacing))*1e3
             elif forwardModel == 'I':
                 return np.real(getQs(cond, depth, self.rxtxspacing, self.cpos, f=self.freqs, hx=self.hx,bxtx=self.bxtxspacing))*1e3
-            elif forwardModel == 'QP':
+            elif forwardModel == 'QI':
                 return getQs(cond, depth, self.rxtxspacing, self.cpos, f=self.freqs, hx=self.hx,bxtx=self.bxtxspacing)*1e3
 
         # define bounds
@@ -618,7 +619,7 @@ class Problem(object):
                 if forwardModel == 'Q':
                     val=self.surveys[0].df[self.coilsQuad].values
                     # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.rxtxspacing)])
-                elif forwardModel == 'QP':
+                elif forwardModel == 'QI':
                     # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.rxtxspacing)])
                     val=self.surveys[0].df[self.coilsInph].values+1j*self.surveys[0].df[self.coilsQuad].values
                 elif forwardModel == 'I':
@@ -662,7 +663,7 @@ class Problem(object):
             # if forwardModel == 'Q':
                 # misfit = misfit*1e6 # to help the solver with small Q
                 # misfit = np.abs(misfit/obs)
-            if forwardModel == 'QP':
+            if forwardModel == 'QI':
                 misfit = np.sqrt(np.imag(misfit)**2 + np.real(misfit)**2)          #!!!!!!! weight factor for inphase not flexble !!!!!! 
                 # the inphase part makes this misfit quite stable (and so
                 # difficult for solver to optimize), adding a coefficient helps
@@ -823,7 +824,7 @@ class Problem(object):
                     # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.rxtxspacing)])
                 elif forwardModel == 'I':
                         obs = inph[j,:]
-                elif forwardModel == 'QP':
+                elif forwardModel == 'QI':
                     # obs = np.array([eca2Q(a*1e-3, s) for a, s in zip(obs, self.rxtxspacing)])
                     obs = 1j*quad[j,:] + inph[j,:]
                     
@@ -881,7 +882,7 @@ class Problem(object):
                             out = outt
                         depth[j,vd] = out[:np.sum(vd)]
                         model[j,vc] = out[np.sum(vd):]
-                        if forwardModel == 'QP':
+                        if forwardModel == 'QI':
                             obs = np.sqrt(np.imag(obs)**2 + np.real(obs)**2)                         #!!! Usinng damping factor for Inphase!!!!!!!!!! Should be a variable not a constant in code!!!!!!!!!!!!
                         rmse[j] = np.sqrt(np.sum((dataMisfit(out, obs, ini0)/obs)**2)/len(obs))*100
                     except Exception as e:
@@ -926,7 +927,7 @@ class Problem(object):
                             print('{:d}th iteration done.'.format(l))
                         depth[j,vd] = out[:np.sum(vd)]
                         model[j,vc] = out[np.sum(vd):]
-                        if forwardModel == 'QP':
+                        if forwardModel == 'QI':
                             obs = np.sqrt(np.real(obs)**2 + np.imag(obs)**2)
                         rmse[j] = np.sqrt(np.sum((dataMisfit(out, obs, ini0)/obs)**2)/len(obs))*100
                     except Exception as e:
@@ -1453,7 +1454,7 @@ class Problem(object):
         # if forwardModel == 'Q':
             # print('For the Q forward model, the ECa values will be computed using FSeq')
             # forwardModel = 'FSeq'
-        if forwardModel in ['CS','FSlin','FSeq','QP','Q']:
+        if forwardModel in ['CS','FSlin','FSeq','QI','Q','I']:
             if forwardModel == 'CS':
                 def fmodel(p, depth):
                     return fCS(p, depth, rxtxspacing, cpos, hx=hxs)
@@ -1463,7 +1464,7 @@ class Problem(object):
             elif forwardModel == 'FSeq':
                 def fmodel(p, depth):
                     return fMaxwellQ(p, depth, rxtxspacing, cpos, f=freqs, hx=hxs)
-            elif forwardModel == 'QP':
+            elif forwardModel == 'QI':
                 dataType = complex
                 def fmodel(p, depth):
                     return getQs(p, depth, rxtxspacing, cpos,freqs, hx=hxs,bxtx=bxtxspacing)*1e3   # !!!! 
@@ -1477,10 +1478,10 @@ class Problem(object):
                     return np.real(getQs(p, depth, rxtxspacing, cpos, freqs, hx=hxs,bxtx=bxtxspacing))*1e3
         else:
             raise ValueError('Forward model {:s} is not available.'
-                             'Choose between CS, FSlin, FSeq, Q or QP'.format(forwardModel))
+                             'Choose between CS, FSlin, FSeq, Q, I or QI'.format(forwardModel))
         
         def addnoise(x, level=0.05):
-            if forwardModel == 'QP':
+            if forwardModel == 'QI':
                 return x + 1j*np.random.randn(len(x))*np.imag(x)*level+ np.random.randn(len(x))*np.real(x)*level  # !!!! 
             else:
                 return x + np.random.randn(len(x))*x*level
@@ -1498,7 +1499,7 @@ class Problem(object):
                 sdepth = depth[j,:]
                 apps[j,:] = addnoise(fmodel(conds, sdepth), level=noise)
             
-            if forwardModel == 'QP':
+            if forwardModel == 'QI':
                 d=np.concatenate([np.imag(apps),np.real(apps)],axis=1)
                 l=[a+'_quad' for a in self.coils]+[a+'_inph' for a in self.coils]
                 # print(l)
@@ -1506,6 +1507,8 @@ class Problem(object):
                 df = pd.DataFrame(d, columns=l)
             elif forwardModel == 'Q':
                 df = pd.DataFrame(apps, columns=[a+'_quad' for a in self.coils])
+            elif forwardModel == 'I':
+                df = pd.DataFrame(apps, columns=[a+'_inph' for a in self.coils])
             else:
                 df = pd.DataFrame(apps, columns=self.coils)
             
